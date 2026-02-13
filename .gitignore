@@ -1,0 +1,43 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+*.whl
+
+# ----- Virtual Environment -----
+env/
+venv/
+.venv/
+ENV/
+
+# ----- IDE / Editor -----
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ----- Streamlit -----
+.streamlit/secrets.toml
+
+# ----- Data (large files — keep classes.txt and yaml) -----
+data/train/
+data/val/
+data.zip
+*.cache
+
+# ----- Logs & Temp -----
+*.log
+tmp/
+temp/
+
+# ----- OS -----
+.DS_Store
+Thumbs.db
+desktop.ini
