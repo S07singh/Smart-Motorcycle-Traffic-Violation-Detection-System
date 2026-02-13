@@ -1,0 +1,4 @@
+helmet
+no_helmet
+person
+license_plate

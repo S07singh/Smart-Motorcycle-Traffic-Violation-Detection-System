@@ -1,0 +1,10 @@
+path: /content/drive/MyDrive/traffic_violation_project/data
+
+train: train/images
+val: val/images
+
+names:
+  0: helmet
+  1: no_helmet
+  2: person
+  3: license_plate
