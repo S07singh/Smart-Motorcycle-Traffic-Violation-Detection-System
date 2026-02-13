@@ -11,9 +11,21 @@ AI-powered traffic violation detection using **dual YOLOv8 models** and **EasyOC
 
 ## 🧠 Model Training
 
-The custom YOLOv8 model was trained on Google Colab using a curated dataset of motorcycle traffic images.
+The custom YOLOv8 model was trained on Google Colab using the Kaggle dataset below.
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/S07singh/Smart-Motorcycle-Traffic-Violation-Detection-System/blob/main/Smart_Motorcycle_Traffic_Violation_Detection_System.ipynb)
+
+---
+
+## 📦 Dataset
+
+This project uses the **Rider with Helmet / Without Helmet / Number Plate** dataset from Kaggle:
+
+[![Kaggle Dataset](https://img.shields.io/badge/Kaggle-Dataset-20BEFF?logo=kaggle&logoColor=white)](https://www.kaggle.com/datasets/aneesarom/rider-with-helmet-without-helmet-number-plate)
+
+🔗 **[Rider with Helmet / Without Helmet / Number Plate](https://www.kaggle.com/datasets/aneesarom/rider-with-helmet-without-helmet-number-plate)**
+
+The dataset contains annotated images of motorcycle riders with and without helmets, along with license plate annotations — used to train the custom YOLOv8 model for 4-class detection (`helmet`, `no_helmet`, `person`, `license_plate`).
 
 ---
 
