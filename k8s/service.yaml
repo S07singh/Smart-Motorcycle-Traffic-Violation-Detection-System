@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: violation-api-service
+  labels:
+    app: violation-api
+spec:
+  selector:
+    app: violation-api
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8000
+  type: LoadBalancer

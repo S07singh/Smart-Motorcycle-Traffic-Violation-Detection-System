@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: violation-config
+  labels:
+    app: violation-api
+data:
+  REDIS_URL: "redis://redis-service:6379/0"
+  API_WORKERS: "2"
+  LOG_LEVEL: "info"

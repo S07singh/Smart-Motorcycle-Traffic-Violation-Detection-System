@@ -1,3 +1,4 @@
+# ─── Python ───
 __pycache__/
 *.py[cod]
 *$py.class
@@ -8,13 +9,13 @@ dist/
 build/
 *.whl
 
-# ----- Virtual Environment -----
+# ─── Virtual Environments ───
 env/
 venv/
 .venv/
 ENV/
 
-# ----- IDE / Editor -----
+# ─── IDE / Editor ───
 .vscode/
 .idea/
 *.swp
@@ -22,22 +23,43 @@ ENV/
 *~
 .DS_Store
 Thumbs.db
+desktop.ini
 
-# ----- Streamlit -----
-.streamlit/secrets.toml
+# ─── Backend ───
+backend/__pycache__/
+backend/utils/__pycache__/
 
-# ----- Data (large files — keep classes.txt and yaml) -----
-data/train/
-data/val/
+# ─── Frontend ───
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.env.local
+frontend/.env*.local
+
+# ─── Model files (large, use Git LFS or download separately) ───
+*.pt
+backend/model/*.pt
+
+# ─── Data (training data — not needed at runtime) ───
+data/
 data.zip
 *.cache
 
-# ----- Logs & Temp -----
+# ─── Docker ───
+docker-compose.override.yml
+
+# ─── Logs & Temp ───
 *.log
 tmp/
 temp/
 
-# ----- OS -----
+# ─── OS ───
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# ─── Streamlit (legacy) ───
+.streamlit/secrets.toml
+
+# ─── Misc ───
+prompt.txt

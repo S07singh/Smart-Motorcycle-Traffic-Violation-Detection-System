@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: violation-api
+  labels:
+    app: violation-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: violation-api
+  template:
+    metadata:
+      labels:
+        app: violation-api
+    spec:
+      containers:
+      - name: api
+        image: violation-api:latest
+        ports:
+        - containerPort: 8000
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 60
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        env:
+        - name: REDIS_URL
+          valueFrom:
+            configMapKeyRef:
+              name: violation-config
+              key: REDIS_URL
+        volumeMounts:
+        - name: model-storage
+          mountPath: /app/model
+          readOnly: true
+      volumes:
+      - name: model-storage
+        persistentVolumeClaim:
+          claimName: model-pvc
