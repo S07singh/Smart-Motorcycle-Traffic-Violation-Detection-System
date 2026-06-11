@@ -63,19 +63,23 @@ def deskew_plate(plate_img: np.ndarray) -> np.ndarray:
 
 def preprocess_plate(plate_img: np.ndarray) -> np.ndarray:
     """
-    Full preprocessing pipeline:
+    Preprocessing pipeline for PaddleOCR:
       1. Deskew (perspective correction)
       2. Upscale 2-3x with bicubic interpolation
-      3. Convert to grayscale
-      4. CLAHE for contrast normalisation (handles dark / overexposed plates)
-      5. Single adaptive threshold (Gaussian)
-      6. Morphological close (fill small gaps)
-      7. Morphological open (remove noise)
+      3. Apply CLAHE on each BGR channel for contrast normalisation
+
+    NOTE: We intentionally skip binarisation / thresholding here.
+    PaddleOCR's internal detector is trained on real-world colour images.
+    Feeding it a binarised (black-and-white) image — even converted back to
+    BGR — significantly degrades accuracy because the neural network's feature
+    extraction layers rely on colour gradient information that thresholding
+    destroys.  CLAHE on the colour image is sufficient to handle dark or
+    overexposed plates while keeping all character edge information intact.
     """
     # 1. Deskew
     deskewed = deskew_plate(plate_img)
 
-    # 2. Upscale
+    # 2. Upscale (2-3x bicubic)
     h, w = deskewed.shape[:2]
     scale_factor = max(2, min(3, 300 // max(w, 1)))
     resized = cv2.resize(
@@ -84,29 +88,16 @@ def preprocess_plate(plate_img: np.ndarray) -> np.ndarray:
         interpolation=cv2.INTER_CUBIC,
     )
 
-    # 3. Grayscale
-    gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
-
-    # 4. CLAHE
+    # 3. CLAHE applied per channel in LAB colour space to boost contrast
+    #    without distorting hue — keeps the image as a 3-channel BGR array
+    lab = cv2.cvtColor(resized, cv2.COLOR_BGR2LAB)
+    l_channel, a, b = cv2.split(lab)
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-    gray = clahe.apply(gray)
+    l_channel = clahe.apply(l_channel)
+    enhanced_lab = cv2.merge([l_channel, a, b])
+    enhanced_bgr = cv2.cvtColor(enhanced_lab, cv2.COLOR_LAB2BGR)
 
-    # 5. Single adaptive threshold (bug fix: removed duplicate call)
-    thresh = cv2.adaptiveThreshold(
-        gray,
-        255,
-        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY,
-        blockSize=11,
-        C=2,
-    )
-
-    # 6 & 7. Morphological operations
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
-    cleaned = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=1)
-    cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_OPEN, kernel, iterations=1)
-
-    return cleaned
+    return enhanced_bgr
 
 
 # ---------------------------------------------------------------------------
@@ -130,22 +121,25 @@ def clean_plate_text(raw_text: str) -> str:
     Supports:
       - Standard:  XX 00 X(X) 0000  (e.g. MH12AB1234)
       - BH-series: 00BH0000X(X)     (e.g. 22BH1234AB)
+
+    For non-Indian plates the raw OCR text is returned as-is (whitespace
+    normalised) so the display stays human-readable instead of being
+    collapsed into a garbled alphanumeric-only string.
     """
-    text = raw_text.upper()
+    text = raw_text.upper().strip()
     stripped = re.sub(r"[^A-Z0-9]", "", text)
 
-    # Try standard Indian plate
+    # Try standard Indian plate on stripped text
     match = INDIAN_PLATE_PATTERN.search(stripped)
     if match:
-        result = match.group().replace(" ", "")
-        return result
+        return match.group().replace(" ", "")
 
-    # Try BH-series plate
+    # Try BH-series plate on stripped text
     bh_match = BH_PLATE_PATTERN.search(stripped)
     if bh_match:
         return bh_match.group()
 
-    # Fallback: apply corrections and retry
+    # Apply OCR character corrections and retry both patterns
     corrected = _apply_char_corrections(stripped)
     match = INDIAN_PLATE_PATTERN.search(corrected)
     if match:
@@ -155,7 +149,9 @@ def clean_plate_text(raw_text: str) -> str:
     if bh_match:
         return bh_match.group()
 
-    return stripped
+    # No Indian pattern matched — return the whitespace-normalised raw text
+    # so non-Indian plates remain human-readable (e.g. "29-Y6 4447")
+    return re.sub(r"\s+", " ", text)
 
 
 # ---------------------------------------------------------------------------
@@ -174,10 +170,15 @@ def extract_plate_text(
     x1, y1, x2, y2 = bbox
     h, w = image.shape[:2]
 
-    x1 = max(0, x1)
-    y1 = max(0, y1)
-    x2 = min(w, x2)
-    y2 = min(h, y2)
+    # Expand the bounding box by 25% on each side — the custom model's plate
+    # boxes are often tight, causing OCR to only see the central portion of the
+    # plate (e.g., "8AB" instead of "UP 78 AB 1234").
+    pad_x = max(6, int((x2 - x1) * 0.25))
+    pad_y = max(6, int((y2 - y1) * 0.25))
+    x1 = max(0, x1 - pad_x)
+    y1 = max(0, y1 - pad_y)
+    x2 = min(w, x2 + pad_x)
+    y2 = min(h, y2 + pad_y)
 
     empty_result: Dict[str, Any] = {
         "raw_text": "",

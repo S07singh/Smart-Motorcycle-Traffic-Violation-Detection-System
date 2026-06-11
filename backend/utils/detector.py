@@ -10,6 +10,7 @@ CLASS_NAMES: Dict[int, str] = {
 }
 
 COCO_MOTORCYCLE_CLASS_ID = 3
+COCO_PERSON_CLASS_ID = 0
 
 
 def load_model(model_path: str) -> YOLO:
@@ -79,5 +80,39 @@ def detect_motorcycles(
     return motorcycles
 
 
+def detect_persons_coco(
+    coco_model: YOLO,
+    image: np.ndarray,
+    confidence: float = 0.25,
+) -> List[Dict[str, Any]]:
+    """Detect full-body persons using the COCO model (class 0).
+
+    Preferred over the custom model for person/rider counting because:
+    - Produces full-body bounding boxes (not just head/upper-body)
+    - Avoids double-detection of the same rider at different body regions
+    - COCO person class is trained on 330k+ diverse images
+    """
+    results = coco_model(
+        image, conf=confidence, classes=[COCO_PERSON_CLASS_ID], verbose=False
+    )
+
+    persons: List[Dict[str, Any]] = []
+    for result in results:
+        for box in result.boxes:
+            x1, y1, x2, y2 = box.xyxy[0].tolist()
+            conf = float(box.conf[0].item())
+            persons.append(
+                {
+                    "class_name": "person",
+                    "class_id": COCO_PERSON_CLASS_ID,
+                    "confidence": conf,
+                    "bbox": [int(x1), int(y1), int(x2), int(y2)],
+                }
+            )
+
+    return persons
+
+
 def detect_persons(detections: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Fallback: extract persons detected by the custom model."""
     return [det for det in detections if det["class_name"] == "person"]

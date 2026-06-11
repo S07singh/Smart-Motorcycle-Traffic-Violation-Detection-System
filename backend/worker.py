@@ -16,7 +16,7 @@ from typing import List, Dict, Any
 import cv2
 from celery import Celery
 
-from utils.detector import load_model, load_coco_model, run_detection, detect_motorcycles, detect_persons
+from utils.detector import load_model, load_coco_model, run_detection, detect_motorcycles, detect_persons_coco
 from utils.ocr_engine import init_ocr_reader, extract_plate_text
 from utils.violation_checker import check_violations, check_triple_riding
 from utils.visualizer import draw_detections
@@ -121,9 +121,13 @@ def process_video_task(
 
         detections = run_detection(custom_model, frame, confidence=confidence)
         motorcycles = detect_motorcycles(coco_model, frame, confidence=confidence)
-        persons = detect_persons(detections)
-        triple_riding_results = check_triple_riding(motorcycles, persons)
+        coco_persons = detect_persons_coco(coco_model, frame, confidence=confidence)
+        triple_riding_results = check_triple_riding(motorcycles, coco_persons, detections)
         violation_report = check_violations(detections, triple_riding_results)
+        # person_count = helmet + no_helmet (each face detection = 1 rider)
+        violation_report["person_count"] = (
+            violation_report["helmet_count"] + violation_report["no_helmet_count"]
+        )
         annotated_frame = draw_detections(frame, detections, violation_report, motorcycles)
 
         out.write(annotated_frame)
@@ -139,7 +143,7 @@ def process_video_task(
         # OCR every 10th frame
         if frame_count % 10 == 0:
             for det in detections:
-                if det["class_name"] == "license_plate":
+                if det["class_name"] == "license_plate" and det["confidence"] >= 0.45:
                     ocr_result = extract_plate_text(ocr_reader, frame, det["bbox"])
                     if ocr_result["cleaned_text"]:
                         all_plate_texts.append({

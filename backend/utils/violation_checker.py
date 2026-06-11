@@ -12,28 +12,109 @@ def _point_in_box(point: Tuple[int, int], bbox: List[int]) -> bool:
     return x1 <= px <= x2 and y1 <= py <= y2
 
 
+def _overlap_ratio(bbox_a: List[int], bbox_b: List[int]) -> float:
+    """Return what fraction of bbox_a's area overlaps with bbox_b."""
+    ix1 = max(bbox_a[0], bbox_b[0])
+    iy1 = max(bbox_a[1], bbox_b[1])
+    ix2 = min(bbox_a[2], bbox_b[2])
+    iy2 = min(bbox_a[3], bbox_b[3])
+    if ix2 <= ix1 or iy2 <= iy1:
+        return 0.0
+    intersection = (ix2 - ix1) * (iy2 - iy1)
+    area_a = max((bbox_a[2] - bbox_a[0]) * (bbox_a[3] - bbox_a[1]), 1)
+    return intersection / area_a
+
+
+def _assign_to_closest_motorcycle(
+    det_bbox: List[int],
+    motorcycles: List[Dict[str, Any]],
+) -> int:
+    """Return the index of the motorcycle this detection most likely belongs to.
+
+    Assignment rules (in priority order):
+      1. The detection must be in the vertical rider-zone of the motorcycle:
+         [mc_y1 - 2 × mc_height, mc_y2].  Detections outside this zone for
+         every motorcycle are unassigned (returns -1).
+      2. Among eligible motorcycles, pick the one whose horizontal centre is
+         closest to the detection's horizontal centre.
+
+    Using closest-motorcycle assignment (instead of a broad overlap check)
+    prevents riders on adjacent motorcycles from being double-counted when
+    motorcycle bounding boxes or their expanded regions overlap in dense
+    traffic scenes.
+    """
+    d_cx = (_get_center(det_bbox))[0]
+    d_cy = (_get_center(det_bbox))[1]
+
+    best_idx = -1
+    best_dist = float("inf")
+
+    for i, mc in enumerate(motorcycles):
+        mc_x1, mc_y1, mc_x2, mc_y2 = mc["bbox"]
+        mc_height = max(mc_y2 - mc_y1, 1)
+
+        # Vertical rider-zone: from 2× height above to bottom of vehicle
+        in_y_zone = (mc_y1 - mc_height * 2) <= d_cy <= mc_y2
+        if not in_y_zone:
+            continue
+
+        # Horizontal distance between detection centre and motorcycle centre
+        mc_cx = (mc_x1 + mc_x2) / 2
+        dist = abs(d_cx - mc_cx)
+
+        if dist < best_dist:
+            best_dist = dist
+            best_idx = i
+
+    return best_idx
+
+
 def check_triple_riding(
     motorcycles: List[Dict[str, Any]],
     persons: List[Dict[str, Any]],
+    detections: List[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
+    """Check triple riding per motorcycle using exclusive assignment.
+
+    Each helmet/no_helmet detection and each COCO person is assigned to
+    exactly ONE motorcycle — the closest one within its vertical rider-zone.
+    This prevents double-counting in dense traffic where motorcycle bboxes
+    and their expanded regions overlap each other.
+
+    Effective rider count per motorcycle = max(COCO persons, helmet count).
+    Triple riding is flagged when effective_count > 2.
+    """
+    n = len(motorcycles)
+    mc_person_lists: List[List[Dict]] = [[] for _ in range(n)]
+    mc_helmet_counts: List[int] = [0] * n
+
+    # Assign each COCO person to its closest motorcycle
+    for person in persons:
+        idx = _assign_to_closest_motorcycle(person["bbox"], motorcycles)
+        if idx >= 0:
+            mc_person_lists[idx].append(person)
+
+    # Assign each helmet/no_helmet detection to its closest motorcycle
+    if detections:
+        for det in detections:
+            if det["class_name"] not in ("helmet", "no_helmet"):
+                continue
+            idx = _assign_to_closest_motorcycle(det["bbox"], motorcycles)
+            if idx >= 0:
+                mc_helmet_counts[idx] += 1
+
     results: List[Dict[str, Any]] = []
-
-    for mc in motorcycles:
-        mc_bbox = mc["bbox"]
-        associated_persons = []
-
-        for person in persons:
-            person_center = _get_center(person["bbox"])
-            if _point_in_box(person_center, mc_bbox):
-                associated_persons.append(person)
-
-        is_violating = len(associated_persons) > 2
+    for i, mc in enumerate(motorcycles):
+        associated_persons = mc_person_lists[i]
+        helmet_count = mc_helmet_counts[i]
+        effective_count = max(len(associated_persons), helmet_count)
+        is_violating = effective_count > 2
 
         results.append(
             {
-                "motorcycle_bbox": mc_bbox,
+                "motorcycle_bbox": mc["bbox"],
                 "motorcycle_confidence": mc["confidence"],
-                "persons_count": len(associated_persons),
+                "persons_count": effective_count,
                 "person_bboxes": [p["bbox"] for p in associated_persons],
                 "is_triple_riding": is_violating,
             }
@@ -81,7 +162,7 @@ def check_violations(
                     }
                 )
 
-    # Per-motorcycle triple riding check (new logic)
+    # Per-motorcycle triple riding check
     if triple_riding_results is not None:
         for tr in triple_riding_results:
             if tr["is_triple_riding"]:
@@ -102,7 +183,7 @@ def check_violations(
                     }
                 )
     else:
-        # Fallback: old global count if no motorcycle data available
+        # Fallback: global count when no per-motorcycle data is available
         if person_count >= 3:
             is_triple_riding = True
             violations.append(

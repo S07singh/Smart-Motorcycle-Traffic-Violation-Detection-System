@@ -18,12 +18,14 @@ from typing import Dict, Any, List, Optional
 
 import cv2
 import numpy as np
+# pyrefly: ignore [missing-import]
 from fastapi import FastAPI, UploadFile, File, Form, BackgroundTasks, HTTPException
+# pyrefly: ignore [missing-import]
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from utils.detector import load_model, load_coco_model, run_detection, detect_motorcycles, detect_persons
+from utils.detector import load_model, load_coco_model, run_detection, detect_motorcycles, detect_persons_coco
 from utils.ocr_engine import init_ocr_reader, extract_plate_text
 from utils.violation_checker import check_violations, check_triple_riding
 from utils.visualizer import draw_detections
@@ -161,25 +163,35 @@ def _process_single_image(
     coco_model = models["coco"]
     ocr_reader = models["ocr"]
 
-    # Run custom model for helmet/no_helmet/person/license_plate
+    # Run custom model for helmet/no_helmet/license_plate
     detections = run_detection(custom_model, image_bgr, confidence=confidence)
 
-    # Run COCO model for motorcycle detection
+    # Run COCO model for motorcycle + person detection
     motorcycles = detect_motorcycles(coco_model, image_bgr, confidence=confidence)
+    coco_persons = detect_persons_coco(coco_model, image_bgr, confidence=confidence)
 
-    # Extract person detections for association
-    persons = detect_persons(detections)
+    # Per-motorcycle triple riding check using full-body COCO persons +
+    # helmet/no_helmet detections as rider proxies for occluded riders
+    triple_riding_results = check_triple_riding(motorcycles, coco_persons, detections)
 
-    # Per-motorcycle triple riding check
-    triple_riding_results = check_triple_riding(motorcycles, persons)
-
-    # Full violation report with per-motorcycle data
+    # Full violation report
     violation_report = check_violations(detections, triple_riding_results)
 
-    # OCR on license plates
+    # person_count = helmet detections + no_helmet detections
+    # Each face-level detection from the custom model = exactly 1 rider.
+    # This is more accurate than summing triple_riding_results (which can
+    # double-count in dense traffic) or raw COCO person count (which includes
+    # background pedestrians).
+    violation_report["person_count"] = (
+        violation_report["helmet_count"] + violation_report["no_helmet_count"]
+    )
+
+    # OCR on license plates — skip detections below 0.45 confidence to avoid
+    # reading bike body markings that the custom model occasionally mistakes
+    # for a license plate (false positives).
     plate_results = []
     for det in detections:
-        if det["class_name"] == "license_plate":
+        if det["class_name"] == "license_plate" and det["confidence"] >= 0.45:
             ocr_result = extract_plate_text(ocr_reader, image_bgr, det["bbox"])
             plate_results.append({
                 "raw_text": ocr_result["raw_text"],
@@ -270,9 +282,13 @@ def _process_video_background(
 
             detections = run_detection(custom_model, frame, confidence=confidence)
             motorcycles = detect_motorcycles(coco_model, frame, confidence=confidence)
-            persons = detect_persons(detections)
-            triple_riding_results = check_triple_riding(motorcycles, persons)
+            coco_persons = detect_persons_coco(coco_model, frame, confidence=confidence)
+            triple_riding_results = check_triple_riding(motorcycles, coco_persons, detections)
             violation_report = check_violations(detections, triple_riding_results)
+            # person_count uses effective_count (COCO + helmet proxy)
+            violation_report["person_count"] = sum(
+                tr["persons_count"] for tr in triple_riding_results
+            ) if triple_riding_results else 0
             annotated_frame = draw_detections(frame, detections, violation_report, motorcycles)
 
             out.write(annotated_frame)
