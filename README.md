@@ -34,13 +34,33 @@ The dataset contains annotated images of motorcycle riders with and without helm
 ## ✨ Features
 
 - **Dual YOLOv8 Detection** — Custom model for helmet/person/plate + pretrained COCO model for motorcycle detection.
-- **Per-Motorcycle Triple Riding** — Center-based person-motorcycle spatial association instead of naive global person count.
+- **Per-Motorcycle Triple Riding** — Exclusive closest-motorcycle assignment with tightened vertical (1.2× height) and horizontal (±15% width) zones to prevent double-counting in dense traffic.
 - **No Helmet Detection** — Flags riders without helmets with per-detection confidence scores.
-- **Enhanced License Plate OCR** — Deskew → upscale → CLAHE → adaptive threshold → morphological cleanup + PaddleOCR with Indian plate regex (standard + BH-series).
+- **Multi-Strategy License Plate OCR** — 4-pass PaddleOCR pipeline (det/no-det × preprocessed/raw) with Otsu deskew, CLAHE, Indian plate regex, and state-code correction map (e.g. "IN" → "TN").
 - **Image & Video Support** — Upload JPG/PNG images or MP4/AVI/MOV/MKV videos for analysis.
 - **Async Video Processing** — Non-blocking video detection with real-time progress polling.
 - **Modern Dashboard** — Surveillance/command-center themed Next.js UI with glassmorphism, animations, and Recharts visualizations.
 - **Production-Ready** — Docker Compose deployment with Redis, Celery workers, and Kubernetes manifests for scaling.
+
+---
+
+## 📸 Results
+
+### Single Motorcycle — Triple Riding + No Helmet
+
+| Detection Output | Violation Report |
+|:---:|:---:|
+| ![Triple riding detected](docs/screenshots/result1.png) | ![Violation cards](docs/screenshots/result2.png) |
+
+> ✅ Correctly identifies **3 persons** on one motorcycle, **3 no-helmet violations**, and reads license plate **UP78AB1234** via PaddleOCR.
+
+### Dense Traffic Scene — Multiple Motorcycles
+
+| Annotated Output | License Plates & Chart |
+|:---:|:---:|
+| ![Dense traffic](docs/screenshots/result3.png) | ![Plates & chart](docs/screenshots/result4.png) |
+
+> ✅ Correctly assigns riders to their respective motorcycles using exclusive closest-motorcycle assignment. Reads **TN09BT9721** and corrects **IN-02-AV-649 → TN02AV649** via state-code correction map.
 
 ---
 
@@ -200,14 +220,13 @@ Input Frame
 
 | Step | Technique | Purpose |
 |------|-----------|---------|
-| 1 | Deskew (minAreaRect) | Corrects rotated plates |
-| 2 | Bicubic upscale (2-3x) | Small plates need ~32px char height for OCR |
-| 3 | Grayscale conversion | Reduces color noise |
-| 4 | CLAHE (clipLimit=2.0) | Normalizes contrast for dark/overexposed plates |
-| 5 | Adaptive Gaussian threshold | Handles uneven lighting → clean B&W text |
-| 6 | Morphological close + open | Fills char gaps, removes noise dots |
-| 7 | Indian plate regex | Extracts valid patterns (standard + BH-series) |
-| 8 | Character corrections | Fixes common OCR misreads (O→0, I→1, etc.) |
+| 1 | Otsu deskew (text-pixel minAreaRect) | Corrects rotation using text pixels only; skips if angle >15° or <1° |
+| 2 | Bicubic upscale (2-3×) | Small plates need ~32 px char height for OCR accuracy |
+| 3 | CLAHE on L-channel (LAB) | Normalises contrast for dark/overexposed plates without hue distortion |
+| 4 | 4-strategy PaddleOCR | det=True/False × preprocessed/raw crop; returns on first Indian plate match |
+| 5 | Indian plate regex | Extracts standard `XX00XX0000` and BH-series `00BH0000XX` patterns |
+| 6 | Character corrections | Fixes numeric-position misreads (O→0, I→1, Z→2, S→5, B→8) |
+| 7 | State-code correction map | Fixes leading-code misreads (IN→TN, UF→UP, 1N→TN, etc.) |
 
 ---
 
