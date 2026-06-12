@@ -50,7 +50,7 @@ The dataset contains annotated images of motorcycle riders with and without helm
 
 | Detection Output | Violation Report |
 |:---:|:---:|
-| ![Triple riding detected](docs/screenshots/result1.png) | ![Violation cards](docs/screenshots/result2.png) |
+| ![Triple riding detected](docs/screenshots/result4.png) | ![Violation cards](docs/screenshots/result5.png) |
 
 > ✅ Correctly identifies **3 persons** on one motorcycle, **3 no-helmet violations**, and reads license plate **UP78AB1234** via PaddleOCR.
 
@@ -58,7 +58,7 @@ The dataset contains annotated images of motorcycle riders with and without helm
 
 | Annotated Output | License Plates & Chart |
 |:---:|:---:|
-| ![Dense traffic](docs/screenshots/result3.png) | ![Plates & chart](docs/screenshots/result4.png) |
+| ![Dense traffic](docs/screenshots/result2.png) | ![Plates & chart](docs/screenshots/result3.png) |
 
 > ✅ Correctly assigns riders to their respective motorcycles using exclusive closest-motorcycle assignment. Reads **TN09BT9721** and corrects **IN-02-AV-649 → TN02AV649** via state-code correction map.
 
