@@ -42,7 +42,7 @@ export default function ViolationCard({
                 </span>
               </span>
             )}
-            {personsCount !== undefined && (
+            {typeof personsCount === "number" && (
               <span>
                 Persons:{" "}
                 <span className="text-[#e8edf5] font-mono">{personsCount}</span>
