@@ -19,13 +19,32 @@ from paddleocr import PaddleOCR
 INDIAN_PLATE_PATTERN = re.compile(r"[A-Z]{2}\s*\d{2}\s*[A-Z]{1,2}\s*\d{4}")
 BH_PLATE_PATTERN = re.compile(r"\d{2}BH\d{4}[A-Z]{1,2}")
 
-# Common OCR misreads for Indian plates — applied only in numeric positions
+# Common OCR misreads for Indian plates — applied in numeric positions
 CHAR_CORRECTIONS: Dict[str, str] = {
     "O": "0",
     "I": "1",
     "Z": "2",
     "S": "5",
     "B": "8",
+}
+
+# All valid Indian state/UT two-letter codes
+VALID_STATE_CODES = {
+    "AP", "AR", "AS", "BR", "CG", "CH", "DD", "DL", "DN", "GA",
+    "GJ", "HP", "HR", "JH", "JK", "KA", "KL", "LA", "LD", "MH",
+    "ML", "MN", "MP", "MZ", "NL", "OD", "PB", "PY", "RJ", "SK",
+    "TN", "TR", "TS", "UK", "UP", "WB",
+}
+
+# Known OCR misreads at the state-code position (2 leading chars)
+STATE_CODE_CORRECTIONS: Dict[str, str] = {
+    "IN": "TN",   # I/T confusion is very common in low-res fonts
+    "1N": "TN",
+    "UF": "UP",   # P/F confusion
+    "U9": "UP",
+    "WS": "MS",
+    "0D": "OD",
+    "KA": "KA",   # already valid — listed for clarity
 }
 
 
@@ -41,16 +60,30 @@ def init_ocr_reader() -> PaddleOCR:
 # Preprocessing helpers
 # ---------------------------------------------------------------------------
 def deskew_plate(plate_img: np.ndarray) -> np.ndarray:
-    """Correct small rotations in the plate crop using minAreaRect."""
+    """Correct small rotations in the plate crop using minAreaRect.
+
+    The original approach of fitting minAreaRect to ALL non-black pixels
+    captures the whole image (road photos have almost no pure-black pixels),
+    giving a garbage angle.  We now threshold with Otsu first so the rect
+    is fitted only to TEXT pixels, and we bail out for large angles which
+    indicate the deskew has misread the content.
+    """
     gray = cv2.cvtColor(plate_img, cv2.COLOR_BGR2GRAY)
-    coords = np.column_stack(np.where(gray > 0))
-    if len(coords) == 0:
+    # Otsu binarisation — finds text pixels only, not background
+    _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    coords = np.column_stack(np.where(thresh > 0))
+    if len(coords) < 50:          # too few text pixels → skip deskew
         return plate_img
     angle = cv2.minAreaRect(coords)[-1]
+    # Skip if the angle is implausibly large — deskew has misidentified the text
+    if abs(angle) > 15:
+        return plate_img
     if angle < -45:
         angle = -(90 + angle)
     else:
         angle = -angle
+    if abs(angle) < 1.0:          # negligible tilt → skip the warp
+        return plate_img
     (h, w) = plate_img.shape[:2]
     center = (w // 2, h // 2)
     M = cv2.getRotationMatrix2D(center, angle, 1.0)
@@ -114,6 +147,23 @@ def _apply_char_corrections(text: str) -> str:
     return "".join(result)
 
 
+def _correct_state_code(plate: str) -> str:
+    """Fix known OCR misreads at the 2-letter state code prefix.
+
+    If the first two characters form an invalid state code and a known
+    correction exists, replace them.  This catches "IN" → "TN" etc.
+    """
+    if len(plate) < 2:
+        return plate
+    code = plate[:2]
+    if code in VALID_STATE_CODES:
+        return plate
+    correction = STATE_CODE_CORRECTIONS.get(code)
+    if correction:
+        return correction + plate[2:]
+    return plate
+
+
 def clean_plate_text(raw_text: str) -> str:
     """
     Clean raw OCR output and attempt to match Indian plate formats.
@@ -123,8 +173,7 @@ def clean_plate_text(raw_text: str) -> str:
       - BH-series: 00BH0000X(X)     (e.g. 22BH1234AB)
 
     For non-Indian plates the raw OCR text is returned as-is (whitespace
-    normalised) so the display stays human-readable instead of being
-    collapsed into a garbled alphanumeric-only string.
+    normalised) so the display stays human-readable.
     """
     text = raw_text.upper().strip()
     stripped = re.sub(r"[^A-Z0-9]", "", text)
@@ -132,7 +181,7 @@ def clean_plate_text(raw_text: str) -> str:
     # Try standard Indian plate on stripped text
     match = INDIAN_PLATE_PATTERN.search(stripped)
     if match:
-        return match.group().replace(" ", "")
+        return _correct_state_code(match.group().replace(" ", ""))
 
     # Try BH-series plate on stripped text
     bh_match = BH_PLATE_PATTERN.search(stripped)
@@ -143,20 +192,58 @@ def clean_plate_text(raw_text: str) -> str:
     corrected = _apply_char_corrections(stripped)
     match = INDIAN_PLATE_PATTERN.search(corrected)
     if match:
-        return match.group().replace(" ", "")
+        return _correct_state_code(match.group().replace(" ", ""))
 
     bh_match = BH_PLATE_PATTERN.search(corrected)
     if bh_match:
         return bh_match.group()
 
     # No Indian pattern matched — return the whitespace-normalised raw text
-    # so non-Indian plates remain human-readable (e.g. "29-Y6 4447")
     return re.sub(r"\s+", " ", text)
 
 
 # ---------------------------------------------------------------------------
-# Main extraction
+# OCR helper
 # ---------------------------------------------------------------------------
+def _ocr_attempt(
+    reader: PaddleOCR,
+    img: np.ndarray,
+    det: bool = True,
+) -> tuple:
+    """Run PaddleOCR on img and return (raw_text, confidence) or None.
+
+    det=True  — use PaddleOCR's text region detector (default).  Good for
+                clean plates but may miss characters outside the detected region.
+    det=False — skip the region detector and read the entire image as one text
+                block.  Catches characters the detector ignores at the edges
+                of tight crops (e.g. "UP" and "1234" left off "8AB").
+    """
+    try:
+        results = reader.ocr(img, det=det, cls=True)
+        if not results or not results[0]:
+            return None
+        lines = results[0]
+        if det:
+            # Format: [[[x1,y1],...], [text, conf]]
+            texts = [line[1][0] for line in lines]
+            confs = [line[1][1] for line in lines]
+        else:
+            # Format: [[text, conf], [text, conf], ...]
+            items = [item for item in lines if isinstance(item, (list, tuple)) and len(item) >= 2]
+            if not items:
+                return None
+            texts = [item[0] for item in items]
+            confs = [item[1] for item in items]
+        if not texts:
+            return None
+        raw = " ".join(texts).strip()
+        conf = sum(confs) / len(confs)
+        return raw, float(conf)
+    except Exception:
+        return None
+
+
+
 def extract_plate_text(
     reader: PaddleOCR,
     image: np.ndarray,
@@ -169,6 +256,8 @@ def extract_plate_text(
     """
     x1, y1, x2, y2 = bbox
     h, w = image.shape[:2]
+
+    x1_orig, y1_orig, x2_orig, y2_orig = x1, y1, x2, y2  # save original before padding
 
     # Expand the bounding box by 25% on each side — the custom model's plate
     # boxes are often tight, causing OCR to only see the central portion of the
@@ -190,29 +279,53 @@ def extract_plate_text(
     if x2 - x1 < 10 or y2 - y1 < 10:
         return empty_result
 
+    # Skip plates that are cut off by the frame edge — when the original bbox
+    # (before padding) sits within 15 px of any image border, the plate is
+    # partially outside the frame. OCR will only see a clipped fragment
+    # (e.g. "02-" instead of "TN-02-AV-6412") and still return a high
+    # confidence score for that partial text, which is worse than no result.
+    EDGE_MARGIN = 5
     plate_crop = image[y1:y2, x1:x2]
-    processed = preprocess_plate(plate_crop)
-
-    try:
-        ocr_results = reader.ocr(processed, cls=True)
-
-        if not ocr_results or not ocr_results[0]:
-            empty_result["plate_crop"] = plate_crop
-            return empty_result
-
-        raw_text = " ".join([line[1][0] for line in ocr_results[0]])
-        avg_confidence = sum(line[1][1] for line in ocr_results[0]) / len(
-            ocr_results[0]
-        )
-        cleaned_text = clean_plate_text(raw_text)
-
-        return {
-            "raw_text": raw_text,
-            "cleaned_text": cleaned_text,
-            "confidence": float(avg_confidence),
-            "plate_crop": plate_crop,
-        }
-
-    except Exception:
+    if (x1_orig < EDGE_MARGIN or x2_orig > w - EDGE_MARGIN
+            or y1_orig < EDGE_MARGIN or y2_orig > h - EDGE_MARGIN):
         empty_result["plate_crop"] = plate_crop
         return empty_result
+    processed = preprocess_plate(plate_crop)
+
+    # Four strategies — return immediately on the first Indian plate match.
+    # Strategy 2 (raw + det=True) is often the best for clean plates because
+    # the deskew in preprocessing can still corrupt some crops slightly.
+    strategies = [
+        (processed,  True),    # 1. preprocessed + region detection
+        (plate_crop, True),    # 2. raw crop  + region detection  ← often best
+        (processed,  False),   # 3. preprocessed, full image as one text block
+        (plate_crop, False),   # 4. raw crop,  full image as one text block
+    ]
+
+    best: Dict[str, Any] = {**empty_result, "plate_crop": plate_crop}
+
+    for img_to_ocr, use_det in strategies:
+        attempt = _ocr_attempt(reader, img_to_ocr, det=use_det)
+        if not attempt:
+            continue
+        raw, conf = attempt
+        cleaned = clean_plate_text(raw)
+        # Return immediately on a valid Indian plate match
+        stripped = re.sub(r"[^A-Z0-9]", "", cleaned.upper())
+        if INDIAN_PLATE_PATTERN.search(stripped) or BH_PLATE_PATTERN.search(stripped):
+            return {
+                "raw_text": raw,
+                "cleaned_text": cleaned,
+                "confidence": conf,
+                "plate_crop": plate_crop,
+            }
+        # Keep the longest result as fallback
+        if len(cleaned) > len(best.get("cleaned_text", "")):
+            best = {
+                "raw_text": raw,
+                "cleaned_text": cleaned,
+                "confidence": conf,
+                "plate_crop": plate_crop,
+            }
+
+    return best

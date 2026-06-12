@@ -52,16 +52,25 @@ def _assign_to_closest_motorcycle(
     for i, mc in enumerate(motorcycles):
         mc_x1, mc_y1, mc_x2, mc_y2 = mc["bbox"]
         mc_height = max(mc_y2 - mc_y1, 1)
+        mc_width  = max(mc_x2 - mc_x1, 1)
+        mc_cx = (mc_x1 + mc_x2) / 2
 
-        # Vertical rider-zone: from 2× height above to bottom of vehicle
-        in_y_zone = (mc_y1 - mc_height * 2) <= d_cy <= mc_y2
+        # Vertical rider-zone: tightened to 1.2× height above the vehicle.
+        # Using 2× was too loose — in dense traffic it pulled riders from
+        # adjacent motorcycles into the wrong zone.
+        in_y_zone = (mc_y1 - mc_height * 1.2) <= d_cy <= mc_y2
         if not in_y_zone:
             continue
 
-        # Horizontal distance between detection centre and motorcycle centre
-        mc_cx = (mc_x1 + mc_x2) / 2
-        dist = abs(d_cx - mc_cx)
+        # Horizontal zone: detection centre must be within the motorcycle's
+        # horizontal span with 15% tolerance on each side.
+        # Using ±0.8× width-from-center was too loose — in a side-by-side
+        # traffic scene a detection 160 px outside the MC was still eligible.
+        in_x_zone = (mc_x1 - mc_width * 0.15) <= d_cx <= (mc_x2 + mc_width * 0.15)
+        if not in_x_zone:
+            continue
 
+        dist = abs(d_cx - mc_cx)
         if dist < best_dist:
             best_dist = dist
             best_idx = i
@@ -106,8 +115,16 @@ def check_triple_riding(
     results: List[Dict[str, Any]] = []
     for i, mc in enumerate(motorcycles):
         associated_persons = mc_person_lists[i]
-        helmet_count = mc_helmet_counts[i]
-        effective_count = max(len(associated_persons), helmet_count)
+        face_count = mc_helmet_counts[i]   # helmet + no_helmet from custom model
+        coco_count = len(associated_persons)
+
+        # Prefer face-level detections (each = 1 rider on the bike).
+        # Fall back to COCO person count ONLY when the custom model found zero
+        # faces for this motorcycle (e.g. all riders have helmets that obscure
+        # face detection, or camera angle hides faces).
+        # We do NOT take max(face, coco) because COCO includes background
+        # pedestrians who happen to be closest to this motorcycle.
+        effective_count = face_count if face_count > 0 else coco_count
         is_violating = effective_count > 2
 
         results.append(
