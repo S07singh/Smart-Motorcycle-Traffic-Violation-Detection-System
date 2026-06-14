@@ -9,6 +9,21 @@ AI-powered traffic violation detection using **dual YOLOv8 models** and **Paddle
 ![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
+[![Frontend - Vercel](https://img.shields.io/badge/Frontend-Vercel-black?logo=vercel&logoColor=white)](https://smart-motorcycle-traffic-violation.vercel.app)
+[![Backend - HF Spaces](https://img.shields.io/badge/Backend-HuggingFace%20Spaces-FFD21E?logo=huggingface&logoColor=black)](https://huggingface.co/spaces/sudhirsingh/motorcycle-violation-api)
+
+---
+
+## 🌐 Live Demo
+
+| | URL |
+|--|-----|
+| 🖥️ **Frontend (Dashboard)** | [smart-motorcycle-traffic-violation.vercel.app](https://smart-motorcycle-traffic-violation.vercel.app) |
+| ⚙️ **Backend API** | [sudhirsingh-motorcycle-violation-api.hf.space](https://sudhirsingh-motorcycle-violation-api.hf.space) |
+| 📖 **API Docs (Swagger)** | [sudhirsingh-motorcycle-violation-api.hf.space/docs](https://sudhirsingh-motorcycle-violation-api.hf.space/docs) |
+
+> ⚠️ The HF Spaces backend is on a free CPU tier and may take **~30 seconds to wake up** after inactivity. Subsequent requests are fast.
+
 ---
 
 ## 🧠 Model Training
