@@ -355,6 +355,23 @@ def _process_video_background(
 # Endpoints
 # ---------------------------------------------------------------------------
 
+@app.get("/")
+async def root():
+    """API info — shown in Hugging Face Spaces preview."""
+    return {
+        "name": "Smart Motorcycle Traffic Violation Detection API",
+        "version": "1.0.0",
+        "status": "running",
+        "docs": "/docs",
+        "health": "/health",
+        "endpoints": {
+            "image_detection": "POST /detect/image",
+            "video_detection": "POST /detect/video",
+            "job_status": "GET /job/{job_id}/status",
+        },
+    }
+
+
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
     """Health check endpoint."""
